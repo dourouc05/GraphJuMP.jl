@@ -6,7 +6,7 @@ using MetaGraphs
 
 export setgraph!, removegraph!, addpath!
 
-const extKey = "GraphJuMP"
+const extKey = :GraphJuMP
 
 """
 Several formulations of the flows are possible: 
@@ -44,16 +44,17 @@ end
 """
 Stores the internal state of the graph model. 
 """
-mutable struct GraphModelExt{T, U, V}
-  graph::MetaDiGraph{T, U} # The graph below this model. Must be a "meta" graph, as many properties might be useful for each edge or vertex. 
+mutable struct GraphModelExt{T <: Int, U <: Real}
+  graph::MetaDiGraph{T, U} # The graph below this model. Must be a "meta" graph, as many properties might be useful for each edge or vertex (such as max capacity). 
   formulation::GraphFormulation # A graph formulation, see GraphFormulation enumeration. 
   delayed::Bool # For a path formulation, controls when paths are computed: false, before solving; true, after solving. 
-  flowcategory::Bool # The JuMP category for flow variables. For now, these are: :Cont, :Int, :Bin, :SemiCont, :SemiInt, :SDP
-  commodities::Vector{V} # Whether several commodities are present. 
+  flowcategory::Symbol # The JuMP category for flow variables. For now, these are: :Cont, :Int, :Bin, :SemiCont, :SemiInt, :SDP
+  commodities::Vector{String} # Whether several commodities are present. 
   formulationext::Union{GraphFormulationExt, Void} # The formulation object, once it is built (after calling `buildformulation`). 
 
-  function GraphModelExt{T, U, V}(graph::MetaDiGraph{T, U}, formulation::GraphFormulation=EdgeFlow(), 
-                                  delayed::Bool=false, flowcategory::Symbol=:Cont, commodities::Vector{V}=Vector{String}(["default"]))
+  function GraphModelExt{T, U}(graph::MetaDiGraph{T, U}, formulation::GraphFormulation=EdgeFlow(), 
+                               delayed::Bool=false, flowcategory::Symbol=:Cont, commodities::Vector{String}=String["default"]
+                              ) where{T, U}
     return new(graph, formulation, delayed, flowcategory, commodities, nothing)
   end
 end
@@ -76,7 +77,9 @@ function setgraph!(m::Model, graph::GraphModelExt)
   m.ext[extKey].formulationext = buildformulation(m)
 end
 
-setgraph!{T, U}(m::Model, g::MetaDiGraph{T, U}, args...) = setgraph!(m, GraphModelExt(g, args...))
+setgraph!{T, U}(m::Model, graph::MetaDiGraph{T, U}, args...) = setgraph!(m, GraphModelExt{T, U}(graph, args...))
+setgraph!{T}(m::Model, graph::AbstractMetaGraph{T}, args...) = error("GraphJuMP only uses graphs with metadata from the MetaGraphs.jl package. " * 
+  "You can convert your `graph` to a MetaGraph using `MetaGraph(graph)`. ")
 
 function removegraph!(m::Model)
   if hasgraph(m)
@@ -88,24 +91,24 @@ end
 # Build the formulations. 
 function buildformulation(m::Model) # Makes a dispatch on the formulation. 
   checkgraph(m)
-  m.formulationext = buildformulation(m, getgraphext(m).formulation)
+  return buildformulation(m, getgraphext(m).formulation)
 end
 
 function buildformulation(m::Model, gf::EdgeFlow)
   # Create the flow variables, one per edge and per commodity. 
   n_edges = ne(getgraph(m))
   n_commodities = length(getgraphext(m).commodities)
-  flows = @variable(m, [e=1:n_edges, c=1:n_commodities], category=m.flowcategory)
+  flows = @variable(m, [e=1:n_edges, c=1:n_commodities], category=getgraphext(m).flowcategory)
 
   # Map edge and their IDs in the model. 
-  id_to_edge = Dict([idx => edge for (idx, edge) in edges(getgraph(m))])
+  id_to_edge = Dict([idx => edge for (idx, edge) in enumerate(edges(getgraph(m)))])
   edge_to_id = map(reverse, id_to_edge)
 
   # Give names to the flow variables. 
   for e in 1:n_edges
     for c in 1:n_commodities
       edge = id_to_edge[e]
-      setname(flows[e, c], "flow_" * str(edge.src) * "_to_" * str(edge.dst) * "_commodity_" * str(getgraphext(m).commodities[c]))
+      setname(flows[e, c], "flow_" * string(edge.src) * "_to_" * string(edge.dst) * "_commodity_" * string(getgraphext(m).commodities[c]))
     end
   end
 
